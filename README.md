@@ -329,15 +329,10 @@ This project is open source and available under the MIT License.
 
 ## 🗺️ Roadmap
 
-- [ ] Web interface for configuration
 - [ ] Plugin system for easy extensions
-- [ ] Multi-language support
 - [ ] Voice synthesis improvements
-- [ ] Docker containerization
 - [ ] Raspberry Pi optimization
 - [ ] Home Assistant integration
-- [ ] Wake word detection
-
 ## 📧 Contact
 
 For questions, suggestions, or issues, please open an issue on GitHub.
