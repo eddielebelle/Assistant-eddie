@@ -1,0 +1,36 @@
+# Core Dependencies
+python-dotenv>=0.19.0
+
+# MQTT for home automation
+paho-mqtt>=1.6.0
+
+# Voice Recognition
+SpeechRecognition>=3.8.1
+openai-whisper>=20230124
+
+# Natural Language Processing
+spacy>=3.0.0
+langchain>=0.0.200
+transformers>=4.20.0
+torch>=1.10.0
+
+# Music Integration
+spotipy>=2.19.0
+
+# Utilities
+pytz>=2021.3
+word2number>=1.1
+fuzzywuzzy>=0.18.0
+python-Levenshtein>=0.12.0
+
+# Audio Processing
+pydub>=0.25.1
+
+# State Management
+python-statemachine>=0.8.0
+
+# System Integration
+sdnotify>=0.3.2
+
+# Hugging Face Pipeline
+sentence-transformers>=2.0.0

@@ -1,0 +1,62 @@
+graph TB
+    subgraph "User Interface"
+        MIC[🎤 Microphone Input]
+        SPEAKER[🔊 Audio Output]
+    end
+
+    subgraph "Translation Layer - NLP & Voice Processing"
+        WHISPER[Whisper STT<br/>Speech Recognition]
+        SPACY[spaCy NER<br/>Entity Extraction]
+        T5[T5 Model<br/>Intent Classification]
+        TTS[VITS TTS<br/>Voice Synthesis]
+    end
+
+    subgraph "MQTT Message Bus"
+        MQTT_BROKER[MQTT Broker<br/>Message Routing]
+    end
+
+    subgraph "Action Layer - Command Execution"
+        EXECUTOR[Command Executor<br/>State Machine]
+        
+        subgraph "Tools"
+            CLOCK[⏰ Clock/Timer]
+            MUSIC[🎵 Spotify Control]
+            SMART[🏠 Smart Home]
+            UTILS[🎲 Utilities]
+        end
+    end
+
+    subgraph "External Services"
+        SPOTIFY[Spotify API]
+        IOT[IoT Devices<br/>via MQTT]
+    end
+
+    MIC -->|Audio Stream| WHISPER
+    WHISPER -->|Transcribed Text| SPACY
+    WHISPER -->|Text| T5
+    SPACY -->|Entities| MQTT_BROKER
+    T5 -->|Intent| MQTT_BROKER
+    
+    MQTT_BROKER -->|Action Commands| EXECUTOR
+    
+    EXECUTOR --> CLOCK
+    EXECUTOR --> MUSIC
+    EXECUTOR --> SMART
+    EXECUTOR --> UTILS
+    
+    MUSIC <-->|API Calls| SPOTIFY
+    SMART <-->|Commands| IOT
+    
+    EXECUTOR -->|Response| MQTT_BROKER
+    MQTT_BROKER -->|Text Response| TTS
+    TTS -->|Audio| SPEAKER
+    
+    CLOCK -.->|Notifications| MQTT_BROKER
+    
+    style WHISPER fill:#e1f5ff
+    style T5 fill:#e1f5ff
+    style SPACY fill:#e1f5ff
+    style MQTT_BROKER fill:#fff4e1
+    style EXECUTOR fill:#ffe1e1
+    style MUSIC fill:#e8f5e9
+    style SPOTIFY fill:#1DB954

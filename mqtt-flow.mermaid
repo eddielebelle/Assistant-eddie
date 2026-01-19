@@ -1,0 +1,29 @@
+sequenceDiagram
+    participant User
+    participant Mic
+    participant TranslationLayer
+    participant MQTT
+    participant ActionLayer
+    participant Spotify
+    participant Speaker
+
+    User->>Mic: "Play Radio by Alkaline Trio"
+    Mic->>TranslationLayer: Audio Stream (mic/mbp)
+    
+    Note over TranslationLayer: Whisper transcribes<br/>spaCy extracts entities<br/>T5 classifies intent
+    
+    TranslationLayer->>MQTT: {<br/>"action": "play",<br/>"band": "Alkaline Trio",<br/>"song": "Radio"<br/>}
+    MQTT->>ActionLayer: step-one/action
+    
+    Note over ActionLayer: Routes to<br/>music_manager
+    
+    ActionLayer->>Spotify: Search & Play Request
+    Spotify-->>ActionLayer: Playback Started
+    
+    ActionLayer->>MQTT: Success Response
+    MQTT->>TranslationLayer: vits/in
+    
+    Note over TranslationLayer: Generate TTS<br/>"Playing Radio by Alkaline Trio"
+    
+    TranslationLayer->>Speaker: Audio Output (vits/out)
+    Speaker->>User: 🔊 Confirmation
