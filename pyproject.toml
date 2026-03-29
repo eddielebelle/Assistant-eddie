@@ -37,11 +37,21 @@ dependencies = [
 voice = [
     # STT
     "openai-whisper>=20230124",
-    # TTS (install on target hardware with CUDA)
-    "TTS>=0.22.0",
     # Audio
     "pydub>=0.25.1",
     "SpeechRecognition>=3.8.1",
+]
+# TTS backends (install the one you want to use)
+tts-kokoro = [
+    "kokoro>=0.9.0",
+    "soundfile>=0.12.0",
+]
+tts-chatterbox = [
+    "chatterbox-tts>=0.1.0",
+    "soundfile>=0.12.0",
+]
+tts-coqui = [
+    "TTS>=0.22.0",
 ]
 dev = [
     "pytest>=8.0.0",

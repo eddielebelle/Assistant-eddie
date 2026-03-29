@@ -46,14 +46,14 @@ Thumbs.db
 # Temporary files
 *.tmp
 recordings/
-*.wav
+audition_samples/
 
 # Model files (large files that shouldn't be in repo)
 whisper_models/
 llm/
-TranslationLayer/en_core_web_lg_ner*/
 *.pt
+*.onnx
+*.gguf
 
 # Local configuration
-config.local.py
 spotify_data.json

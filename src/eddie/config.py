@@ -45,8 +45,12 @@ class EddieConfig(BaseSettings):
     session_idle_timeout: int = 300  # seconds
 
     # TTS
-    tts_speaker_index: int = 80
-    tts_model_name: str = "tts_models/en/vctk/vits"
+    tts_backend: str = "kokoro"  # "kokoro", "chatterbox", or "coqui"
+    tts_kokoro_voice: str = "bf_emma"  # bf_* = British female, bm_* = British male
+    tts_kokoro_lang: str = "b"  # "a" = American, "b" = British
+    tts_chatterbox_ref_audio: str = ""  # Path to reference audio for voice cloning (optional)
+    tts_coqui_speaker_index: int = 80  # Legacy Coqui VITS speaker
+    tts_coqui_model_name: str = "tts_models/en/vctk/vits"
 
     # Audio
     alarm_sound_path: str = "./resources/alarm1.wav"
