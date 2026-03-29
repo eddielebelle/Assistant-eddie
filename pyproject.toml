@@ -1,0 +1,73 @@
+[project]
+name = "eddie"
+version = "0.1.0"
+description = "Privacy-first local voice assistant with tool-calling AI agent"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "Owain Mogford"}]
+
+dependencies = [
+    # Core
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "flask>=3.0.0",
+    "requests>=2.31.0",
+
+    # LLM (Ollama Python client)
+    "ollama>=0.4.0",
+
+    # Tools
+    "spotipy>=2.19.0",
+    "pyowm>=3.3.0",
+    "thefuzz>=0.22.0",
+    "python-Levenshtein>=0.25.0",
+    "word2number>=1.1",
+    "pytz>=2024.1",
+    "python-dateutil>=2.9.0",
+
+    # IoT
+    "paho-mqtt>=2.0.0",
+
+    # System
+    "sdnotify>=0.3.2",
+    "gunicorn>=22.0.0",
+]
+
+[project.optional-dependencies]
+voice = [
+    # STT
+    "openai-whisper>=20230124",
+    # TTS (install on target hardware with CUDA)
+    "TTS>=0.22.0",
+    # Audio
+    "pydub>=0.25.1",
+    "SpeechRecognition>=3.8.1",
+]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.8.0",
+    "mypy>=1.0.0",
+    "pre-commit>=3.0.0",
+]
+
+[project.scripts]
+eddie-agent = "eddie.agent.agent:main"
+eddie = "eddie.main:main"
+
+[build-system]
+requires = ["setuptools>=68.0.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "RUF"]
+ignore = ["N999"]  # Repo directory name has a hyphen, not a Python module
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
