@@ -1,0 +1,18 @@
+[Unit]
+Description=Eddie Voice Assistant
+After=network.target eddie-agent.service
+Requires=eddie-agent.service
+
+[Service]
+Type=simple
+User=owain
+Group=owain
+WorkingDirectory=/mnt/data/Projects/Assistant-eddie
+ExecStart=/mnt/data/Projects/Assistant-eddie/.venv/bin/eddie --text
+Restart=on-failure
+RestartSec=5
+Environment=PATH=/mnt/data/Projects/Assistant-eddie/.venv/bin:/usr/bin
+EnvironmentFile=/mnt/data/Projects/Assistant-eddie/.env
+
+[Install]
+WantedBy=multi-user.target

@@ -38,6 +38,7 @@ class EddieConfig(BaseSettings):
     ollama_model: str = "qwen2.5:14b"
 
     # Agent
+    agent_host: str = "localhost"
     agent_port: int = 5000
 
     # Conversation

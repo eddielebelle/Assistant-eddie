@@ -1,0 +1,22 @@
+[Unit]
+Description=Eddie AI Agent Service
+After=network.target ollama.service mosquitto.service
+Wants=ollama.service
+
+[Service]
+Type=simple
+User=owain
+Group=owain
+WorkingDirectory=/mnt/data/Projects/Assistant-eddie
+ExecStart=/mnt/data/Projects/Assistant-eddie/.venv/bin/gunicorn \
+    --bind 0.0.0.0:5000 \
+    --workers 1 \
+    --timeout 120 \
+    eddie.agent.agent:app
+Restart=on-failure
+RestartSec=5
+Environment=PATH=/mnt/data/Projects/Assistant-eddie/.venv/bin:/usr/bin
+EnvironmentFile=/mnt/data/Projects/Assistant-eddie/.env
+
+[Install]
+WantedBy=multi-user.target

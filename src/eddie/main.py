@@ -48,7 +48,7 @@ def chat_via_agent(text: str, agent_url: str) -> str:
 def run_text_mode():
     """Interactive text mode for testing without audio hardware."""
     config = get_config()
-    agent_url = f"http://localhost:{config.agent_port}"
+    agent_url = f"http://{config.agent_host}:{config.agent_port}"
 
     print("Eddie Text Mode - Type your commands (Ctrl+C to quit)")
     print(f"Agent: {agent_url} | Model: {config.ollama_model}")
@@ -81,7 +81,7 @@ def run_voice_mode():
     from eddie.tts.voicer import synthesize
 
     config = get_config()
-    agent_url = f"http://localhost:{config.agent_port}"
+    agent_url = f"http://{config.agent_host}:{config.agent_port}"
 
     recognizer = sr.Recognizer()
     mic = sr.Microphone()
