@@ -102,9 +102,41 @@ def run_text_mode():
             break
 
 
+def _sentence_splitter(token_stream):
+    """Buffer streamed tokens and yield complete sentences as soon as they're ready."""
+    buf = ""
+    for token in token_stream:
+        buf += token
+        # Split on sentence-ending punctuation followed by a space or end
+        while True:
+            # Find the earliest sentence boundary
+            best = -1
+            for delim in [". ", "! ", "? ", ".\n", "!\n", "?\n"]:
+                idx = buf.find(delim)
+                if idx != -1 and (best == -1 or idx < best):
+                    best = idx + 1  # include the punctuation, not the space
+            if best == -1:
+                break
+            sentence = buf[:best].strip()
+            buf = buf[best:]
+            if sentence:
+                yield sentence
+    # Flush remainder
+    remainder = buf.strip()
+    if remainder:
+        yield remainder
+
+
 def run_voice_mode():
-    """Full voice pipeline: Microphone → STT → Agent → TTS → Speaker."""
+    """Full voice pipeline: Microphone → STT → Agent → TTS → Speaker.
+
+    Streams the LLM response and synthesizes/plays each sentence as it
+    arrives, so the user hears the first sentence while the rest is still
+    being generated.
+    """
     import io
+    import queue
+    import threading
     import time
 
     import speech_recognition as sr
@@ -128,6 +160,18 @@ def run_voice_mode():
     logger.info("Eddie is listening! (Ctrl+C to quit)")
     logger.info("Agent: %s | Model: %s", agent_url, config.ollama_model)
 
+    def _play_audio_worker(audio_queue: queue.Queue):
+        """Background thread that plays audio segments in order."""
+        while True:
+            item = audio_queue.get()
+            if item is None:
+                break
+            try:
+                audio_segment = AudioSegment.from_wav(io.BytesIO(item))
+                play(audio_segment)
+            except Exception:
+                logger.exception("Error playing audio")
+
     while _running:
         try:
             # Listen for voice input
@@ -144,17 +188,26 @@ def run_voice_mode():
 
             logger.info("Heard: %s", text)
 
-            # Send to agent (streaming)
-            response = "".join(chat_via_agent(text, agent_url, stream=True))
-            logger.info("Eddie says: %s", response)
+            # Stream response, synthesize and play sentence-by-sentence
+            audio_q = queue.Queue()
+            player = threading.Thread(target=_play_audio_worker, args=(audio_q,), daemon=True)
+            player.start()
 
-            if response:
-                # Synthesize speech
-                wav_data = synthesize(response)
+            token_stream = chat_via_agent(text, agent_url, stream=True)
+            full_response = []
 
-                # Play audio
-                audio_segment = AudioSegment.from_wav(io.BytesIO(wav_data))
-                play(audio_segment)
+            for sentence in _sentence_splitter(token_stream):
+                logger.info("Synthesizing: %s", sentence)
+                full_response.append(sentence)
+                wav_data = synthesize(sentence)
+                if wav_data:
+                    audio_q.put(wav_data)
+
+            # Signal player to finish and wait
+            audio_q.put(None)
+            player.join()
+
+            logger.info("Eddie said: %s", " ".join(full_response))
 
         except sr.WaitTimeoutError:
             continue
