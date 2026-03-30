@@ -27,22 +27,54 @@ def _signal_handler(sig, frame):
     _running = False
 
 
-def chat_via_agent(text: str, agent_url: str) -> str:
-    """Send text to the Eddie agent service and get a response."""
+def chat_via_agent(text: str, agent_url: str, stream: bool = False):
+    """Send text to the Eddie agent service and get a response.
+
+    When stream=True, yields tokens as they arrive (NDJSON).
+    When stream=False, returns the full response string.
+    """
+    import json
+
     try:
         resp = requests.post(
             f"{agent_url}/api/chat",
-            json={"text": text},
-            timeout=60,
+            json={"text": text, "stream": stream},
+            timeout=120,
+            stream=stream,
         )
         resp.raise_for_status()
-        return resp.json().get("response", "")
+
+        if not stream:
+            return resp.json().get("response", "")
+
+        # Yield tokens as they arrive
+        full_response = ""
+        for line in resp.iter_lines():
+            if not line:
+                continue
+            data = json.loads(line)
+            if "token" in data:
+                full_response += data["token"]
+                yield data["token"]
+            if data.get("done"):
+                return
+
+        return full_response
+
     except requests.ConnectionError:
         logger.error("Cannot connect to agent service at %s", agent_url)
-        return "I can't reach my brain right now. Is the agent service running?"
+        msg = "I can't reach my brain right now. Is the agent service running?"
+        if stream:
+            yield msg
+        else:
+            return msg
     except Exception:
         logger.exception("Error communicating with agent service")
-        return "Something went wrong while processing your request."
+        msg = "Something went wrong while processing your request."
+        if stream:
+            yield msg
+        else:
+            return msg
 
 
 def run_text_mode():
@@ -60,8 +92,10 @@ def run_text_mode():
             if not user_input:
                 continue
 
-            response = chat_via_agent(user_input, agent_url)
-            print(f"\nEddie: {response}")
+            print("\nEddie: ", end="", flush=True)
+            for token in chat_via_agent(user_input, agent_url, stream=True):
+                print(token, end="", flush=True)
+            print()
 
         except (KeyboardInterrupt, EOFError):
             print("\nGoodbye!")
@@ -110,8 +144,8 @@ def run_voice_mode():
 
             logger.info("Heard: %s", text)
 
-            # Send to agent
-            response = chat_via_agent(text, agent_url)
+            # Send to agent (streaming)
+            response = "".join(chat_via_agent(text, agent_url, stream=True))
             logger.info("Eddie says: %s", response)
 
             if response:

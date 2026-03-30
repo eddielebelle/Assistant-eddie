@@ -38,11 +38,33 @@ def _build_system_prompt(agent_config: dict) -> str:
     return base
 
 
+def _stream_ollama(model: str, messages: list, tools: list):
+    """Stream an Ollama chat call, collecting the full response.
+
+    Returns (content, tool_calls) once the stream ends.
+    Emits llm_token events for each chunk so the monitor updates live.
+    """
+    content_parts = []
+    tool_calls = []
+
+    for chunk in ollama.chat(model=model, messages=messages, tools=tools, stream=True):
+        msg = chunk.message
+        # Accumulate text tokens
+        if msg.content:
+            content_parts.append(msg.content)
+            events.emit("llm_token", {"token": msg.content})
+        # Tool calls arrive in the final chunk(s)
+        if msg.tool_calls:
+            tool_calls.extend(msg.tool_calls)
+
+    return "".join(content_parts), tool_calls
+
+
 def chat(user_text: str, agent_name: str = "EDDIE_VOICE") -> str:
-    """Process a user message through the tool-calling agent loop.
+    """Process a user message through the streaming tool-calling agent loop.
 
     This is the core loop - same pattern as kindrent's Ray:
-    1. Send user message + tools to LLM
+    1. Send user message + tools to LLM (streaming)
     2. If LLM wants to call a tool, execute it and feed result back
     3. Repeat until LLM has a final text response
     """
@@ -58,20 +80,20 @@ def chat(user_text: str, agent_name: str = "EDDIE_VOICE") -> str:
     system_prompt = _build_system_prompt(agent_config)
     messages = conversation.get_messages(system_prompt)
 
-    # Ollama tool-calling loop
+    # Streaming Ollama tool-calling loop
     events.emit("llm_start", {"model": model})
-    response = ollama.chat(
-        model=model,
-        messages=messages,
-        tools=tools,
-    )
+    content, tool_calls = _stream_ollama(model, messages, tools)
 
     # Loop while the model wants to call tools
-    while response.message.tool_calls:
+    while tool_calls:
         # Add the assistant's tool-call message to history
-        conversation.add_raw(response.message.model_dump())
+        assistant_msg = {"role": "assistant", "content": content, "tool_calls": [
+            {"function": {"name": tc.function.name, "arguments": tc.function.arguments or {}}}
+            for tc in tool_calls
+        ]}
+        conversation.add_raw(assistant_msg)
 
-        for tool_call in response.message.tool_calls:
+        for tool_call in tool_calls:
             tool_name = tool_call.function.name
             arguments = tool_call.function.arguments or {}
 
@@ -93,32 +115,92 @@ def chat(user_text: str, agent_name: str = "EDDIE_VOICE") -> str:
         # Send updated history back to the model
         messages = conversation.get_messages(system_prompt)
         events.emit("llm_start", {"model": model})
-        response = ollama.chat(
-            model=model,
-            messages=messages,
-            tools=tools,
-        )
+        content, tool_calls = _stream_ollama(model, messages, tools)
 
     # Final text response from the model
-    assistant_text = response.message.content
-    conversation.add_message("assistant", assistant_text)
-    events.emit("response", {"text": assistant_text})
+    conversation.add_message("assistant", content)
+    events.emit("response", {"text": content})
 
-    logger.info("Eddie response: %s", assistant_text[:200])
-    return assistant_text
+    logger.info("Eddie response: %s", content[:200])
+    return content
+
+
+def chat_stream(user_text: str, agent_name: str = "EDDIE_VOICE"):
+    """Streaming version of chat - yields tokens as they arrive from the LLM.
+
+    Yields NDJSON: {"token": "..."} per chunk, {"done": true, "response": "..."} at end.
+    Tool-call rounds are resolved internally (LLM typically emits no text during those).
+    The final text response is streamed token-by-token to the client.
+    """
+    import json
+
+    agent_config = AGENT_CONFIGS[agent_name]
+    model = config.ollama_model or agent_config.get("model", "qwen2.5:14b")
+    tools = agent_config["tools"]
+
+    conversation.add_message("user", user_text)
+    events.emit("user_input", {"text": user_text})
+
+    system_prompt = _build_system_prompt(agent_config)
+    messages = conversation.get_messages(system_prompt)
+
+    while True:
+        events.emit("llm_start", {"model": model})
+        content_parts = []
+        tool_calls = []
+
+        for chunk in ollama.chat(model=model, messages=messages, tools=tools, stream=True):
+            msg = chunk.message
+            if msg.content:
+                content_parts.append(msg.content)
+                events.emit("llm_token", {"token": msg.content})
+                yield json.dumps({"token": msg.content}) + "\n"
+            if msg.tool_calls:
+                tool_calls.extend(msg.tool_calls)
+
+        content = "".join(content_parts)
+
+        if not tool_calls:
+            break
+
+        # Tool-call round — handle internally, loop back to LLM
+        assistant_msg = {"role": "assistant", "content": content, "tool_calls": [
+            {"function": {"name": tc.function.name, "arguments": tc.function.arguments or {}}}
+            for tc in tool_calls
+        ]}
+        conversation.add_raw(assistant_msg)
+
+        for tool_call in tool_calls:
+            tool_name = tool_call.function.name
+            arguments = tool_call.function.arguments or {}
+            logger.info("LLM requested tool: %s(%s)", tool_name, arguments)
+            events.emit("tool_call", {"tool": tool_name, "args": arguments})
+            result = execute_tool(tool_name, arguments)
+            events.emit("tool_result", {"tool": tool_name, "result": result[:500]})
+            conversation.add_raw({"role": "tool", "content": result})
+
+        messages = conversation.get_messages(system_prompt)
+
+    conversation.add_message("assistant", content)
+    events.emit("response", {"text": content})
+    logger.info("Eddie response: %s", content[:200])
+    yield json.dumps({"done": True, "response": content}) + "\n"
 
 
 @app.route("/api/chat", methods=["POST"])
 def api_chat():
-    """HTTP endpoint for the agent service."""
+    """HTTP endpoint for the agent service. Supports streaming via Accept header."""
     data = request.get_json()
     if not data or "text" not in data:
         return jsonify({"error": "Missing 'text' field"}), 400
 
     user_text = data["text"]
     agent_name = data.get("agent", "EDDIE_VOICE")
+    stream = data.get("stream", False)
 
     try:
+        if stream:
+            return Response(chat_stream(user_text, agent_name), mimetype="application/x-ndjson")
         response_text = chat(user_text, agent_name)
         return jsonify({"response": response_text})
     except Exception:
@@ -191,23 +273,54 @@ const status = document.getElementById('status');
 const labels = {
   user_input: 'INPUT',
   llm_start:  'LLM',
+  llm_token:  'TOKEN',
   tool_call:  'TOOL',
   tool_result:'RESULT',
   response:   'OUTPUT'
 };
+
+let streamDiv = null;  // tracks the active streaming element
 
 function formatBody(e) {
   switch(e.type) {
     case 'user_input': return e.text;
     case 'llm_start':  return 'Processing with ' + e.model + '...';
     case 'tool_call':  return e.tool + '(' + JSON.stringify(e.args) + ')';
-    case 'tool_result':return e.tool + ' → ' + e.result;
+    case 'tool_result':return e.tool + ' \u2192 ' + e.result;
     case 'response':   return e.text;
     default: return JSON.stringify(e);
   }
 }
 
 function addEvent(e) {
+  // Stream tokens into a single element
+  if (e.type === 'llm_token') {
+    if (!streamDiv) {
+      streamDiv = document.createElement('div');
+      streamDiv.className = 'event llm_start';
+      const t = new Date(e.ts * 1000).toLocaleTimeString();
+      streamDiv.innerHTML = '<span class="time">' + t + '</span> <span class="label">STREAM</span><div class="body"></div>';
+      log.appendChild(streamDiv);
+    }
+    const body = streamDiv.querySelector('.body');
+    body.textContent += e.token;
+    streamDiv.scrollIntoView({behavior: 'smooth'});
+    return;
+  }
+
+  // Final response closes the stream
+  if (e.type === 'response') {
+    if (streamDiv) {
+      streamDiv.className = 'event response';
+      streamDiv.querySelector('.label').textContent = 'OUTPUT';
+      streamDiv = null;
+    }
+    return;
+  }
+
+  // New LLM start closes any previous stream
+  if (e.type === 'llm_start') { streamDiv = null; }
+
   const div = document.createElement('div');
   div.className = 'event ' + e.type;
   const t = new Date(e.ts * 1000).toLocaleTimeString();
