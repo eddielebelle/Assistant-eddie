@@ -11,6 +11,7 @@ WorkingDirectory=/mnt/data/Projects/Assistant-eddie
 ExecStart=/mnt/data/Projects/Assistant-eddie/.venv/bin/gunicorn \
     --bind 0.0.0.0:5000 \
     --workers 1 \
+    --threads 4 \
     --timeout 120 \
     eddie.agent.agent:app
 Restart=on-failure
