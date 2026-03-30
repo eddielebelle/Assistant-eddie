@@ -1,43 +1,49 @@
-"""Whisper-based Speech-to-Text service for Eddie."""
+"""Speech-to-Text service for Eddie using faster-whisper.
 
+faster-whisper is a CTranslate2-based reimplementation of OpenAI's Whisper
+that runs ~4x faster with the same accuracy. Supports CPU (int8) and GPU
+(float16) inference.
+"""
+
+import io
 import logging
 import tempfile
 import wave
 
+import numpy as np
+
 logger = logging.getLogger(__name__)
 
-# Lazy-loaded whisper model
+# Lazy-loaded model
 _model = None
 
 
 def _get_model():
-    """Lazy-load the Whisper model."""
+    """Lazy-load the faster-whisper model."""
     global _model
     if _model is None:
-        import whisper
+        from faster_whisper import WhisperModel
 
         from eddie.config import get_config
 
         config = get_config()
-        model_path = config.whisper_model_path
         model_size = config.whisper_model_size
 
-        if model_path:
-            logger.info("Loading Whisper model from %s", model_path)
-            _model = whisper.load_model(model_path)
-        else:
-            logger.info("Loading Whisper model: %s", model_size)
-            _model = whisper.load_model(model_size)
+        # Auto-detect best device/compute type
+        compute_type = config.whisper_compute_type
+        device = config.whisper_device
 
-        logger.info("Whisper model loaded successfully")
+        logger.info("Loading faster-whisper model: %s (device=%s, compute=%s)", model_size, device, compute_type)
+        _model = WhisperModel(model_size, device=device, compute_type=compute_type)
+        logger.info("faster-whisper model loaded successfully")
     return _model
 
 
 def transcribe(audio_data: bytes, sample_rate: int = 16000, sample_width: int = 2) -> str:
-    """Transcribe audio bytes to text using Whisper.
+    """Transcribe audio bytes to text using faster-whisper.
 
     Args:
-        audio_data: Raw audio bytes (PCM format)
+        audio_data: Raw audio bytes (WAV or PCM format)
         sample_rate: Audio sample rate in Hz
         sample_width: Bytes per sample (2 = 16-bit)
 
@@ -46,17 +52,17 @@ def transcribe(audio_data: bytes, sample_rate: int = 16000, sample_width: int = 
     """
     model = _get_model()
 
-    # Write audio to temp WAV file (Whisper expects a file path)
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tmp:
-        with wave.open(tmp.name, "wb") as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(sample_width)
-            wf.setframerate(sample_rate)
-            wf.writeframes(audio_data)
+    # Convert raw PCM bytes to float32 numpy array
+    audio_np = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
 
-        result = model.transcribe(tmp.name, fp16=False)
+    segments, info = model.transcribe(
+        audio_np,
+        language="en",
+        beam_size=5,
+        vad_filter=True,
+    )
 
-    text = result.get("text", "").strip()
+    text = " ".join(seg.text.strip() for seg in segments).strip()
     logger.info("Transcribed: %s", text[:200])
     return text
 
@@ -64,7 +70,12 @@ def transcribe(audio_data: bytes, sample_rate: int = 16000, sample_width: int = 
 def transcribe_file(file_path: str) -> str:
     """Transcribe an audio file to text."""
     model = _get_model()
-    result = model.transcribe(file_path, fp16=False)
-    text = result.get("text", "").strip()
+    segments, info = model.transcribe(
+        file_path,
+        language="en",
+        beam_size=5,
+        vad_filter=True,
+    )
+    text = " ".join(seg.text.strip() for seg in segments).strip()
     logger.info("Transcribed file %s: %s", file_path, text[:200])
     return text

@@ -29,9 +29,14 @@ class EddieConfig(BaseSettings):
         "port talbot": {"lat": 51.592, "lon": -3.780},
     }
 
-    # Models
-    whisper_model_path: str = ""
+    # STT (faster-whisper)
     whisper_model_size: str = "small.en"
+    whisper_device: str = "auto"  # "auto", "cpu", or "cuda"
+    whisper_compute_type: str = "default"  # "default", "int8", "float16", "float32"
+
+    # Wake word
+    wake_word_model: str = ""  # path to openwakeword .tflite/.onnx model, blank = disabled
+    wake_word_threshold: float = 0.5
 
     # Ollama
     ollama_host: str = "http://localhost:11434"

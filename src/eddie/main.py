@@ -128,37 +128,59 @@ def _sentence_splitter(token_stream):
 
 
 def run_voice_mode():
-    """Full voice pipeline: Microphone → STT → Agent → TTS → Speaker.
+    """Full voice pipeline: Wake word → STT → Agent (streaming) → TTS → Speaker.
 
-    Streams the LLM response and synthesizes/plays each sentence as it
-    arrives, so the user hears the first sentence while the rest is still
-    being generated.
+    Pipeline stages:
+    1. Continuously feed 80ms audio chunks to openwakeword
+    2. On wake word detection, capture utterance (VAD-based silence detection)
+    3. Transcribe captured audio with faster-whisper
+    4. Stream agent response, synthesize and play sentence-by-sentence
     """
     import io
     import queue
+    import struct
     import threading
     import time
 
-    import speech_recognition as sr
+    import numpy as np
+    import pyaudio
     from pydub import AudioSegment
     from pydub.playback import play
 
+    from eddie.stt import wakeword
     from eddie.stt.whisper_stt import transcribe
     from eddie.tts.voicer import synthesize
 
     config = get_config()
     agent_url = f"http://{config.agent_host}:{config.agent_port}"
+    use_wake_word = bool(config.wake_word_model)
 
-    recognizer = sr.Recognizer()
-    mic = sr.Microphone()
+    RATE = 16000
+    CHUNK = wakeword.CHUNK_SAMPLES  # 1280 samples = 80ms
 
-    # Calibrate for ambient noise
-    logger.info("Calibrating microphone for ambient noise...")
-    with mic as source:
-        recognizer.adjust_for_ambient_noise(source, duration=2)
+    # Silence detection parameters
+    SILENCE_THRESHOLD = 500        # RMS amplitude below this = silence
+    SILENCE_TIMEOUT = 1.5          # seconds of silence to end capture
+    MAX_CAPTURE_SECONDS = 15       # max utterance length
 
-    logger.info("Eddie is listening! (Ctrl+C to quit)")
+    pa = pyaudio.PyAudio()
+    stream = pa.open(
+        format=pyaudio.paInt16,
+        channels=1,
+        rate=RATE,
+        input=True,
+        frames_per_buffer=CHUNK,
+    )
+
+    if use_wake_word:
+        logger.info("Eddie listening for wake word (Ctrl+C to quit)")
+    else:
+        logger.info("Eddie listening (no wake word, always on) (Ctrl+C to quit)")
     logger.info("Agent: %s | Model: %s", agent_url, config.ollama_model)
+
+    def _rms(data: np.ndarray) -> float:
+        """Root mean square of audio chunk."""
+        return float(np.sqrt(np.mean(data.astype(np.float32) ** 2)))
 
     def _play_audio_worker(audio_queue: queue.Queue):
         """Background thread that plays audio segments in order."""
@@ -172,17 +194,55 @@ def run_voice_mode():
             except Exception:
                 logger.exception("Error playing audio")
 
-    while _running:
-        try:
-            # Listen for voice input
-            with mic as source:
-                logger.debug("Listening...")
-                audio = recognizer.listen(source, timeout=5, phrase_time_limit=10)
+    def _capture_utterance() -> np.ndarray | None:
+        """Capture audio until silence is detected. Returns int16 numpy array."""
+        frames = []
+        silent_chunks = 0
+        max_chunks = int(MAX_CAPTURE_SECONDS * RATE / CHUNK)
+        silence_chunks_needed = int(SILENCE_TIMEOUT * RATE / CHUNK)
 
-            # Transcribe with Whisper
-            audio_data = audio.get_wav_data()
+        for _ in range(max_chunks):
+            if not _running:
+                return None
+            raw = stream.read(CHUNK, exception_on_overflow=False)
+            chunk = np.frombuffer(raw, dtype=np.int16)
+            frames.append(chunk)
+
+            if _rms(chunk) < SILENCE_THRESHOLD:
+                silent_chunks += 1
+                if silent_chunks >= silence_chunks_needed:
+                    break
+            else:
+                silent_chunks = 0
+
+        if not frames:
+            return None
+        return np.concatenate(frames)
+
+    try:
+        while _running:
+            # Read an 80ms audio chunk
+            raw = stream.read(CHUNK, exception_on_overflow=False)
+            chunk = np.frombuffer(raw, dtype=np.int16)
+
+            # Wake word gate
+            if use_wake_word:
+                detected = wakeword.detect(chunk)
+                if not detected:
+                    continue
+                logger.info("Wake word detected — listening for command...")
+            else:
+                # No wake word: trigger on any significant audio
+                if _rms(chunk) < SILENCE_THRESHOLD:
+                    continue
+
+            # Capture the full utterance
+            audio_data = _capture_utterance()
+            if audio_data is None or len(audio_data) < RATE:  # < 1 second
+                continue
+
+            # Transcribe with faster-whisper
             text = transcribe(audio_data)
-
             if not text or len(text.strip()) < 2:
                 continue
 
@@ -209,14 +269,12 @@ def run_voice_mode():
 
             logger.info("Eddie said: %s", " ".join(full_response))
 
-        except sr.WaitTimeoutError:
-            continue
-        except KeyboardInterrupt:
-            logger.info("Shutting down...")
-            break
-        except Exception:
-            logger.exception("Error in voice loop")
-            time.sleep(1)
+    except KeyboardInterrupt:
+        logger.info("Shutting down...")
+    finally:
+        stream.stop_stream()
+        stream.close()
+        pa.terminate()
 
 
 def main():
