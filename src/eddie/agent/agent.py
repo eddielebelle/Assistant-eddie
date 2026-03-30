@@ -20,6 +20,10 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
+# Register voice endpoint (audio in → audio out)
+from eddie.agent.voice_routes import voice_bp
+app.register_blueprint(voice_bp)
+
 # Global state
 config = get_config()
 conversation = ConversationManager(
@@ -125,15 +129,12 @@ def chat(user_text: str, agent_name: str = "EDDIE_VOICE") -> str:
     return content
 
 
-def chat_stream(user_text: str, agent_name: str = "EDDIE_VOICE"):
-    """Streaming version of chat - yields tokens as they arrive from the LLM.
+def chat_stream_tokens(user_text: str, agent_name: str = "EDDIE_VOICE"):
+    """Core streaming generator — yields raw token strings as they arrive from the LLM.
 
-    Yields NDJSON: {"token": "..."} per chunk, {"done": true, "response": "..."} at end.
-    Tool-call rounds are resolved internally (LLM typically emits no text during those).
-    The final text response is streamed token-by-token to the client.
+    Tool-call rounds are resolved internally. Only the final text response is streamed.
+    Events are emitted throughout for the monitor dashboard.
     """
-    import json
-
     agent_config = AGENT_CONFIGS[agent_name]
     model = config.ollama_model or agent_config.get("model", "qwen2.5:14b")
     tools = agent_config["tools"]
@@ -154,7 +155,7 @@ def chat_stream(user_text: str, agent_name: str = "EDDIE_VOICE"):
             if msg.content:
                 content_parts.append(msg.content)
                 events.emit("llm_token", {"token": msg.content})
-                yield json.dumps({"token": msg.content}) + "\n"
+                yield msg.content
             if msg.tool_calls:
                 tool_calls.extend(msg.tool_calls)
 
@@ -184,7 +185,20 @@ def chat_stream(user_text: str, agent_name: str = "EDDIE_VOICE"):
     conversation.add_message("assistant", content)
     events.emit("response", {"text": content})
     logger.info("Eddie response: %s", content[:200])
-    yield json.dumps({"done": True, "response": content}) + "\n"
+
+
+def chat_stream(user_text: str, agent_name: str = "EDDIE_VOICE"):
+    """NDJSON streaming wrapper around chat_stream_tokens.
+
+    Yields {"token": "..."} per chunk, {"done": true, "response": "..."} at end.
+    """
+    import json
+
+    full_response = []
+    for token in chat_stream_tokens(user_text, agent_name):
+        full_response.append(token)
+        yield json.dumps({"token": token}) + "\n"
+    yield json.dumps({"done": True, "response": "".join(full_response)}) + "\n"
 
 
 @app.route("/api/chat", methods=["POST"])
@@ -339,10 +353,23 @@ es.onerror = () => { dot.style.background = '#f7768e'; status.textContent = 'dis
 </body></html>"""
 
 
+def _preload_models():
+    """Preload STT and TTS models so first request is fast."""
+    from eddie.stt.whisper_stt import _get_model as _get_stt_model
+    from eddie.tts.voicer import _get_backend
+
+    logger.info("Preloading STT model...")
+    _get_stt_model()
+    logger.info("Preloading TTS model...")
+    _get_backend()
+    logger.info("Models ready")
+
+
 def main():
     """Entry point for eddie-agent command."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     logger.info("Starting Eddie Agent on port %d (model: %s)", config.agent_port, config.ollama_model)
+    _preload_models()
     app.run(host="0.0.0.0", port=config.agent_port, debug=False)
 
 

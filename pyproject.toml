@@ -7,15 +7,27 @@ license = {text = "MIT"}
 authors = [{name = "Owain Mogford"}]
 
 dependencies = [
-    # Core
+    # Shared core
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
-    "flask>=3.0.0",
     "requests>=2.31.0",
+]
 
-    # LLM (Ollama Python client)
+[project.optional-dependencies]
+# Thin client: mic, wake word, audio playback
+client = [
+    "openwakeword>=0.6.0",
+    "pyaudio>=0.2.14",
+    "pydub>=0.25.1",
+    "numpy>=1.24.0",
+]
+# Server: agent, LLM, STT, tools
+server = [
+    "flask>=3.0.0",
     "ollama>=0.4.0",
-
+    "gunicorn>=22.0.0",
+    "faster-whisper>=1.0.0",
+    "numpy>=1.24.0",
     # Tools
     "spotipy>=2.19.0",
     "pyowm>=3.3.0",
@@ -24,27 +36,12 @@ dependencies = [
     "word2number>=1.1",
     "pytz>=2024.1",
     "python-dateutil>=2.9.0",
-
     # IoT
     "paho-mqtt>=2.0.0",
-
     # System
     "sdnotify>=0.3.2",
-    "gunicorn>=22.0.0",
 ]
-
-[project.optional-dependencies]
-voice = [
-    # STT (faster-whisper: ~4x faster than openai-whisper)
-    "faster-whisper>=1.0.0",
-    # Wake word detection
-    "openwakeword>=0.6.0",
-    # Audio I/O
-    "pyaudio>=0.2.14",
-    "pydub>=0.25.1",
-    "numpy>=1.24.0",
-]
-# TTS backends (install the one you want to use)
+# TTS backends (install alongside server)
 tts-kokoro = [
     "kokoro>=0.9.0",
     "soundfile>=0.12.0",
@@ -55,6 +52,10 @@ tts-chatterbox = [
 ]
 tts-coqui = [
     "TTS>=0.22.0",
+]
+# Convenience: single-machine dev with everything
+voice = [
+    "eddie[client,server,tts-kokoro]",
 ]
 dev = [
     "pytest>=8.0.0",
